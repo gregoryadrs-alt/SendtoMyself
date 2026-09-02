@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Relay — Send to Myself</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="/socket.io/socket.io.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg: #10141a;
+    --bg-raised: #171d26;
+    --panel: #1b222d;
+    --line: rgba(233,238,246,0.07);
+    --line-strong: rgba(233,238,246,0.14);
+    --ink: #e9eef6;
+    --ink-dim: #8892a0;
+    --ink-faint: #565f6c;
+    --signal: #e0a63a;
+    --signal-dim: #7a5d29;
+    --signal-glow: rgba(224,166,58,0.35);
+    --live: #5fd98a;
+  }
+  *{ box-sizing: border-box; }
+  body{
+    font-family: 'IBM Plex Mono', monospace;
+    background:
+      radial-gradient(ellipse 900px 500px at 15% -10%, rgba(224,166,58,0.05), transparent),
+      radial-gradient(ellipse 700px 500px at 100% 110%, rgba(95,217,138,0.04), transparent),
+      var(--bg);
+    color: var(--ink);
+    min-height: 100vh;
+  }
+  .disp{ font-family: 'Space Grotesk', sans-serif; }
+
+  /* Faint scanline texture on the whole console */
+  .console::before{
+    content: "";
+    position: absolute; inset: 0;
+    background: repeating-linear-gradient(0deg, rgba(255,255,255,0.012) 0px, rgba(255,255,255,0.012) 1px, transparent 1px, transparent 3px);
+    pointer-events: none;
+    border-radius: inherit;
+  }
+
+  .panel{
+    background: var(--panel);
+    border: 1px solid var(--line);
+    position: relative;
+  }
+
+  /* --- Signature: frequency tuner for the room code --- */
+  .tuner{
+    background: var(--bg-raised);
+    border: 1px solid var(--line);
+    padding: 10px 14px;
+  }
+  .tuner-ticks{
+    display:flex; align-items:flex-end; gap: 3px; height: 16px; overflow:hidden;
+  }
+  .tuner-ticks span{
+    width: 2px; background: var(--line-strong); border-radius: 1px;
+    height: 6px; flex-shrink:0;
+  }
+  .tuner-ticks span:nth-child(5n){ height: 12px; background: var(--ink-faint); }
+  .tuner-digits{
+    display:flex; gap:6px;
+  }
+  .tuner-digits input{
+    width: 26px; height: 34px;
+    background: var(--panel);
+    border: 1px solid var(--line-strong);
+    border-radius: 4px;
+    text-align:center;
+    font-family:'IBM Plex Mono',monospace;
+    font-weight: 600;
+    font-size: 16px;
+    color: var(--signal);
+    outline:none;
+    transition: border-color .15s, box-shadow .15s;
+  }
+  .tuner-digits input:focus{
+    border-color: var(--signal);
+    box-shadow: 0 0 0 3px var(--signal-glow);
+  }
+
+  /* --- Signal bars instead of a status dot --- */
+  .signal-bars{ display:flex; align-items:flex-end; gap:2px; height:12px; }
+  .signal-bars i{ width:3px; background: var(--ink-faint); border-radius:1px; display:block; }
+  .signal-bars i:nth-child(1){ height:4px; }
+  .signal-bars i:nth-child(2){ height:7px; }
+  .signal-bars i:nth-child(3){ height:10px; }
+  .signal-bars i:nth-child(4){ height:12px; }
+  .signal-bars.live i{ background: var(--live); animation: blip 1.4s ease-in-out infinite; }
+  .signal-bars.live i:nth-child(1){ animation-delay: 0s; }
+  .signal-bars.live i:nth-child(2){ animation-delay: .12s; }
+  .signal-bars.live i:nth-child(3){ animation-delay: .24s; }
+  .signal-bars.live i:nth-child(4){ animation-delay: .36s; }
+  .signal-bars.down i{ background: #b64b4b; animation:none; opacity:.6; }
+  @keyframes blip{ 0%,100%{ opacity:.45; } 50%{ opacity:1; } }
+
+  /* --- Rocker-style tab switches --- */
+  .rocker{
+    background: var(--bg-raised);
+    border: 1px solid var(--line);
+    padding: 4px;
+    display:inline-flex;
+    gap: 2px;
+    border-radius: 8px;
+  }
+  .rocker button{
+    font-family:'IBM Plex Mono',monospace;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: .04em;
+    padding: 7px 14px;
+    border-radius: 6px;
+    color: var(--ink-dim);
+    transition: all .15s;
+  }
+  .rocker button.on{
+    background: var(--bg);
+    color: var(--signal);
+    box-shadow: inset 0 0 0 1px var(--line-strong), 0 1px 0 rgba(255,255,255,0.03);
+  }
+  .rocker button.on::before{ content:"● "; font-size: 8px; color: var(--live); }
+
+  textarea.console-input{
+    font-family:'IBM Plex Mono',monospace;
+    background: var(--bg-raised);
+    border: 1px solid var(--line);
+    color: var(--ink);
+    resize:none;
+    line-height: 1.7;
+  }
+  textarea.console-input:focus{ outline:none; border-color: var(--signal-dim); box-shadow: 0 0 0 3px rgba(224,166,58,0.12); }
+  textarea.console-input::placeholder{ color: var(--ink-faint); }
+
+  .btn-signal{
+    background: var(--signal);
+    color: #16110a;
+    font-weight: 600;
+    transition: filter .15s, transform .05s;
+  }
+  .btn-signal:hover{ filter: brightness(1.08); }
+  .btn-signal:active{ transform: scale(.97); }
+
+  .btn-ghost{
+    background: var(--bg-raised);
+    border: 1px solid var(--line-strong);
+    color: var(--ink-dim);
+    transition: color .15s, border-color .15s;
+  }
+  .btn-ghost:hover{ color: var(--ink); border-color: var(--ink-faint); }
+
+  .dropzone{
+    border: 1px dashed var(--line-strong);
+    background: var(--bg-raised);
+    transition: border-color .15s, background .15s;
+  }
+  .dropzone:hover, .dropzone.drag{
+    border-color: var(--signal);
+    background: rgba(224,166,58,0.05);
+  }
+
+  .manifest-row{
+    background: var(--bg-raised);
+    border: 1px solid var(--line);
+    border-left: 2px solid var(--signal-dim);
+  }
+
+  .custom-scrollbar::-webkit-scrollbar{ width:6px; }
+  .custom-scrollbar::-webkit-scrollbar-thumb{ background: var(--line-strong); border-radius:9999px; }
+
+  @media (prefers-reduced-motion: reduce){
+    .signal-bars.live i{ animation:none; opacity:1; }
+  }
+</style>
+</head>
+<body class="p-4 sm:p-6 flex justify-center">
+
+  <main class="w-full max-w-2xl space-y-3">
+
+    <!-- Header / device readout -->
+    <header class="console panel rounded-lg p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 relative overflow-hidden">
+      <div class="flex items-center gap-3 relative z-10">
+        <div class="w-9 h-9 rounded-md flex items-center justify-center border" style="background:var(--bg-raised); border-color:var(--line-strong); color:var(--signal);">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12a8 8 0 0 1 16 0M7 12a5 5 0 0 1 10 0M12 12v9"/><circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"/></svg>
+        </div>
+        <div>
+          <h1 class="disp text-[15px] font-bold text-white leading-none tracking-tight">Relay</h1>
+          <div class="flex items-center gap-2 mt-1.5">
+            <div id="signalBars" class="signal-bars live"><i></i><i></i><i></i><i></i></div>
+            <span id="connectionText" class="text-[10px] uppercase tracking-wider" style="color:var(--ink-dim);">Tersambung</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Frequency tuner (room selector) -->
+      <div class="tuner rounded-md flex items-center gap-3 relative z-10">
+        <div>
+          <div class="text-[9px] uppercase tracking-wider mb-1" style="color:var(--ink-faint);">Channel</div>
+          <div class="tuner-digits" id="tunerDigits">
+            <input maxlength="1" inputmode="numeric" value="1">
+            <input maxlength="1" inputmode="numeric" value="2">
+            <input maxlength="1" inputmode="numeric" value="3">
+            <input maxlength="1" inputmode="numeric" value="4">
+          </div>
+        </div>
+        <div class="tuner-ticks flex-1 hidden sm:flex">
+          <span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+        </div>
+        <button id="joinBtn" class="btn-signal text-[11px] px-3 py-2 rounded-md">Tune In</button>
+      </div>
+    </header>
+
+    <!-- Main console -->
+    <section class="panel console rounded-lg p-4 sm:p-5 space-y-4 relative overflow-hidden">
+
+      <div class="rocker relative z-10">
+        <button id="tabTextBtn" class="on">CATATAN &amp; LINK</button>
+        <button id="tabFileBtn" class="">FILE / VIDEO / PDF</button>
+      </div>
+
+      <!-- Text sync -->
+      <div id="textSection" class="space-y-2 relative z-10">
+        <div class="flex items-center justify-between text-[10px]" style="color:var(--ink-faint);">
+          <span id="charCount" class="uppercase tracking-wider">0 karakter</span>
+          <button id="clearBtn" class="hover:text-red-400 transition uppercase tracking-wider">Bersihkan</button>
+        </div>
+        <textarea
+          id="textArea"
+          rows="9"
+          placeholder="> tulis catatan, tautan, atau kode di sini..."
+          class="console-input w-full rounded-md p-4 text-sm custom-scrollbar"
+        ></textarea>
+        <div class="flex justify-end">
+          <button id="copyBtn" class="btn-ghost text-[11px] font-semibold px-4 py-2 rounded-md flex items-center gap-2">
+            <span id="copyText">Salin Teks</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- File section -->
+      <div id="fileSection" class="hidden space-y-4 relative z-10">
+
+        <label for="fileInput" class="dropzone rounded-md p-6 flex flex-col items-center justify-center cursor-pointer">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" style="color:var(--signal);" class="mb-2"><path d="M12 16V4M12 4l-4 4M12 4l4 4"/><path d="M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></svg>
+          <span class="text-xs font-semibold" style="color:var(--ink);">Pilih atau drag file ke sini</span>
+          <span class="text-[10px] mt-1" style="color:var(--ink-faint);">PDF, Video MP4, Gambar, ZIP · Maks. 100 MB</span>
+          <input type="file" id="fileInput" class="hidden">
+        </label>
+
+        <div id="uploadProgress" class="hidden text-[11px] text-center uppercase tracking-wider" style="color:var(--signal);">
+          <span class="inline-block animate-pulse">▮▮▮</span> mengunggah file...
+        </div>
+
+        <div class="space-y-2">
+          <div class="flex items-center justify-between text-[10px] uppercase tracking-wider" style="color:var(--ink-faint);">
+            <span>Log Transmisi — Channel Ini</span>
+            <span id="fileCounter">0</span>
+          </div>
+          <div id="fileList" class="space-y-2 max-h-56 overflow-y-auto custom-scrollbar pr-1">
+            <p id="emptyFileMsg" class="text-xs italic py-2" style="color:var(--ink-faint);">Belum ada file yang dikirim.</p>
+          </div>
+        </div>
+
+      </div>
+
+    </section>
+
+    <p class="text-center text-[10px]" style="color:var(--ink-faint);">Tersinkron secara real-time di semua perangkat pada channel yang sama</p>
+
+  </main>
+
+  <script>
+    // Defensive: if socket.io.js didn't load (no backend reachable yet),
+    // `io` won't exist. Falling through to a no-op stub means the rest of
+    // the UI (tabs, tuner, copy, clear) still wires up and works instead
+    // of the whole script dying on the very first line.
+    function createSocketStub(){
+      return {
+        on(){}, emit(){}, connected: false
+      };
+    }
+    let socket;
+    try {
+      socket = (typeof io === 'function') ? io() : createSocketStub();
+    } catch (err) {
+      console.error('Socket.IO tidak tersedia, berjalan tanpa sinkronisasi live:', err);
+      socket = createSocketStub();
+    }
+
+    const tunerDigits = document.getElementById('tunerDigits');
+    const digitInputs = Array.from(tunerDigits.querySelectorAll('input'));
+    const joinBtn = document.getElementById('joinBtn');
+    const textArea = document.getElementById('textArea');
+    const copyBtn = document.getElementById('copyBtn');
+    const copyText = document.getElementById('copyText');
+    const clearBtn = document.getElementById('clearBtn');
+    const charCount = document.getElementById('charCount');
+    const signalBars = document.getElementById('signalBars');
+    const connectionText = document.getElementById('connectionText');
+
+    const tabTextBtn = document.getElementById('tabTextBtn');
+    const tabFileBtn = document.getElementById('tabFileBtn');
+    const textSection = document.getElementById('textSection');
+    const fileSection = document.getElementById('fileSection');
+
+    const fileInput = document.getElementById('fileInput');
+    const fileList = document.getElementById('fileList');
+    const uploadProgress = document.getElementById('uploadProgress');
+    const fileCounter = document.getElementById('fileCounter');
+    const dropzoneLabel = document.querySelector('.dropzone');
+
+    function readRoom(){
+      return digitInputs.map(i => i.value.trim() || '0').join('');
+    }
+
+    let currentRoom = readRoom();
+    let fileCount = 0;
+
+    // Digit-by-digit tuner input behaviour
+    digitInputs.forEach((input, idx) => {
+      input.addEventListener('input', () => {
+        input.value = input.value.replace(/[^0-9a-zA-Z]/g, '').slice(-1);
+        if (input.value && idx < digitInputs.length - 1) digitInputs[idx + 1].focus();
+      });
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Backspace' && !input.value && idx > 0) digitInputs[idx - 1].focus();
+        if (e.key === 'Enter') joinBtn.click();
+      });
+    });
+
+    // Tabs (rocker switches)
+    tabTextBtn.addEventListener('click', () => {
+      tabTextBtn.classList.add('on');
+      tabFileBtn.classList.remove('on');
+      textSection.classList.remove('hidden');
+      fileSection.classList.add('hidden');
+    });
+
+    tabFileBtn.addEventListener('click', () => {
+      tabFileBtn.classList.add('on');
+      tabTextBtn.classList.remove('on');
+      fileSection.classList.remove('hidden');
+      textSection.classList.add('hidden');
+    });
+
+    // Socket connection
+    socket.on('connect', () => {
+      signalBars.classList.remove('down');
+      signalBars.classList.add('live');
+      connectionText.innerText = 'Tersambung';
+      socket.emit('join-room', currentRoom);
+    });
+
+    socket.on('disconnect', () => {
+      signalBars.classList.remove('live');
+      signalBars.classList.add('down');
+      connectionText.innerText = 'Terputus';
+    });
+
+    // If we fell back to the stub (no real socket.io connection at all),
+    // reflect that honestly instead of leaving the UI stuck on "Tersambung".
+    if (typeof io !== 'function') {
+      signalBars.classList.remove('live');
+      signalBars.classList.add('down');
+      connectionText.innerText = 'Tidak tersambung';
+    }
+
+    joinBtn.addEventListener('click', () => {
+      const newRoom = readRoom();
+      if (newRoom && newRoom !== currentRoom) {
+        currentRoom = newRoom;
+        socket.emit('join-room', currentRoom);
+        fileList.innerHTML = '<p id="emptyFileMsg" class="text-xs italic py-2" style="color:var(--ink-faint);">Belum ada file yang dikirim.</p>';
+        fileCount = 0;
+        fileCounter.innerText = '0';
+      }
+    });
+
+    // Text sync
+    textArea.addEventListener('input', () => {
+      socket.emit('send-text', { room: currentRoom, text: textArea.value });
+      charCount.innerText = `${textArea.value.length} karakter`;
+    });
+
+    socket.on('update-text', (text) => {
+      textArea.value = text;
+      charCount.innerText = `${text.length} karakter`;
+    });
+
+    copyBtn.addEventListener('click', async () => {
+      if (!textArea.value) return;
+      await navigator.clipboard.writeText(textArea.value);
+      copyText.innerText = 'Tersalin!';
+      setTimeout(() => copyText.innerText = 'Salin Teks', 1500);
+    });
+
+    clearBtn.addEventListener('click', () => {
+      textArea.value = '';
+      socket.emit('send-text', { room: currentRoom, text: '' });
+      charCount.innerText = '0 karakter';
+    });
+
+    // Drag styling
+    ;['dragenter','dragover'].forEach(evt => {
+      dropzoneLabel.addEventListener(evt, (e) => { e.preventDefault(); dropzoneLabel.classList.add('drag'); });
+    });
+    ;['dragleave','drop'].forEach(evt => {
+      dropzoneLabel.addEventListener(evt, (e) => { dropzoneLabel.classList.remove('drag'); });
+    });
+
+    // File upload handler
+    fileInput.addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('room', currentRoom);
+
+      uploadProgress.classList.remove('hidden');
+
+      try {
+        const res = await fetch('/upload', { method: 'POST', body: formData });
+        const result = await res.json();
+        if (result.success) {
+          fileInput.value = '';
+        }
+      } catch (err) {
+        console.error('Gagal upload file:', err);
+        alert('Gagal mengunggah file.');
+      } finally {
+        uploadProgress.classList.add('hidden');
+      }
+    });
+
+    // Receive new file
+    socket.on('new-file', (file) => {
+      appendFileItem(file);
+    });
+
+    function appendFileItem(file) {
+      const emptyMsg = document.getElementById('emptyFileMsg');
+      if (emptyMsg) emptyMsg.remove();
+
+      let icon = '📄';
+      if (file.type.includes('image')) icon = '🖼️';
+      else if (file.type.includes('video')) icon = '🎥';
+      else if (file.type.includes('pdf')) icon = '📕';
+
+      fileCount += 1;
+      fileCounter.innerText = String(fileCount);
+
+      const item = document.createElement('div');
+      item.className = 'manifest-row flex items-center justify-between p-3 rounded-md text-xs';
+      item.innerHTML = `
+        <div class="flex items-center gap-3 overflow-hidden pr-2">
+          <span class="text-lg">${icon}</span>
+          <div class="truncate">
+            <p class="font-medium truncate" style="color:var(--ink);">${file.originalName}</p>
+            <span class="text-[10px]" style="color:var(--ink-faint);">${file.size} · ${file.timestamp}</span>
+          </div>
+        </div>
+        <a href="${file.url}" download="${file.originalName}" target="_blank" class="btn-signal text-[11px] font-semibold px-3 py-1.5 rounded-md shrink-0">
+          Download
+        </a>
+      `;
+      fileList.prepend(item);
+    }
+  </script>
+</body>
+</html>
