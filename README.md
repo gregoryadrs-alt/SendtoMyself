@@ -30,3 +30,34 @@ sequenceDiagram
     
     Express-->>Frontend: Response JSON ({ success: true })
     Frontend-->>User: Display "Sent Successfully!" alert & reset form
+```
+
+## Getting Started
+
+Follow these steps to get a local copy up and running.
+
+### Prerequisites
+
+Make sure you have [Node.js](https://nodejs.org/) installed on your machine.
+
+### Installation
+
+1. **Clone the repository**
+   ```bash
+   git clone [https://github.com/gregoryadrs-alt/SendtoMyself](https://github.com/gregoryadrs-alt/SendtoMyself)
+   cd "SendtoMyself"
+   ```
+2. Install dependencies
+    ```bash
+    npm install
+    ```
+3. Start the server
+    ```bash
+    node server.js
+    ```
+4. Access the application
+ ```bash
+ Local: Open http://localhost:3000 in your browser.
+
+ Mobile / Other Devices: Open http://<YOUR-LOCAL-IP>:3000 on devices connected to the same Wi-Fi network.
+```
