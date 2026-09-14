@@ -61,6 +61,5 @@ Make sure you have [Node.js](https://nodejs.org/) installed on your machine.
 
     Mobile / Other Devices: Open http://<YOUR-LOCAL-IP>:8080 on devices connected to the same Wi-Fi network.
     ```
-
 <img width="1366" height="768" alt="ss sendtomyself" src="https://github.com/user-attachments/assets/bc544b83-c898-432b-b2cc-3ac8f7d2f640" />
 <img width="1366" height="768" alt="ss sendtomyself 2" src="https://github.com/user-attachments/assets/0800e4ef-63f1-4983-8a2a-ee14f1f05845" />
